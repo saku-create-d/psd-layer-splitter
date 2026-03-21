@@ -1,0 +1,5 @@
+streamlit
+psd-tools
+pillow
+scikit-image
+aggdraw
