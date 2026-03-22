@@ -37,11 +37,11 @@ html, body, [class*="css"] {
     margin-bottom: 2.5rem;
 }
 .hero h1 {
-    font-family: 'Syne', sans-serif;
+    font-family: Helvetica, Arial, sans-serif;
     font-weight: 800;
     font-size: 3rem;
     letter-spacing: -0.02em;
-    background: linear-gradient(135deg, #e8e0ff 0%, #b388ff 40%, #ff6eb0 100%);
+    background: linear-gradient(135deg, #ffb347 0%, #ff8c00 50%, #ff6a00 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
