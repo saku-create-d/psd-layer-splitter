@@ -2,11 +2,13 @@ import streamlit as st
 import zipfile
 import io
 import re
+from PIL import Image
 from psd_tools import PSDImage
+import fitz  # PyMuPDF
 
 # ── ページ設定 ────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="PSD Layer Splitter",
+    page_title="File Layer Splitter",
     page_icon="🎨",
     layout="centered",
 )
@@ -16,12 +18,10 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@700;800&display=swap');
 
-/* ベース */
 html, body, [class*="css"] {
     font-family: 'Space Mono', monospace;
 }
 
-/* 背景 */
 .stApp {
     background: #0a0a0f;
     background-image:
@@ -29,7 +29,6 @@ html, body, [class*="css"] {
         radial-gradient(ellipse 60% 40% at 80% 80%, rgba(255, 60, 120, 0.08) 0%, transparent 60%);
 }
 
-/* ヘッダー */
 .hero {
     text-align: center;
     padding: 3rem 0 2rem;
@@ -56,7 +55,29 @@ html, body, [class*="css"] {
     margin: 0;
 }
 
-/* アップロードゾーン */
+/* バッジ：対応形式 */
+.badge-row {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+}
+.badge {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    padding: 3px 10px;
+    border-radius: 20px;
+    border: 1px solid;
+}
+.badge-psd  { color: #b388ff; border-color: rgba(179,136,255,0.4); background: rgba(179,136,255,0.07); }
+.badge-ai   { color: #ff9e40; border-color: rgba(255,158,64,0.4);  background: rgba(255,158,64,0.07);  }
+.badge-eps  { color: #40c8ff; border-color: rgba(64,200,255,0.4);  background: rgba(64,200,255,0.07);  }
+.badge-pdf  { color: #ff6060; border-color: rgba(255,96,96,0.4);   background: rgba(255,96,96,0.07);   }
+.badge-jpg  { color: #60ff9e; border-color: rgba(96,255,158,0.4);  background: rgba(96,255,158,0.07);  }
+
 [data-testid="stFileUploader"] {
     background: rgba(255,255,255,0.03) !important;
     border: 1px dashed rgba(179, 136, 255, 0.35) !important;
@@ -68,7 +89,6 @@ html, body, [class*="css"] {
     border-color: rgba(179, 136, 255, 0.65) !important;
 }
 
-/* ボタン */
 .stButton > button,
 .stDownloadButton > button {
     font-family: 'Space Mono', monospace !important;
@@ -92,32 +112,6 @@ html, body, [class*="css"] {
     box-shadow: 0 8px 24px rgba(124, 77, 255, 0.4) !important;
 }
 
-/* レイヤーカード グリッド */
-.layer-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 12px;
-    margin: 1.5rem 0;
-}
-.layer-card {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 10px;
-    padding: 10px;
-    text-align: center;
-    font-size: 0.68rem;
-    color: rgba(255,255,255,0.5);
-    letter-spacing: 0.04em;
-    word-break: break-all;
-}
-.layer-card img {
-    max-width: 100%;
-    border-radius: 6px;
-    margin-bottom: 6px;
-    background: repeating-conic-gradient(#444 0% 25%, #333 0% 50%) 0 0 / 12px 12px;
-}
-
-/* メトリクス */
 [data-testid="stMetric"] {
     background: rgba(255,255,255,0.03);
     border: 1px solid rgba(255,255,255,0.07);
@@ -127,26 +121,19 @@ html, body, [class*="css"] {
 [data-testid="stMetricLabel"] { color: rgba(255,255,255,0.35) !important; font-size: 0.68rem !important; }
 [data-testid="stMetricValue"] { color: #b388ff !important; font-family: 'Syne', sans-serif !important; }
 
-/* 区切り線 */
 hr { border-color: rgba(255,255,255,0.06) !important; }
-
-/* テキスト */
 p, li { color: rgba(255,255,255,0.6) !important; }
 h2, h3 { color: rgba(255,255,255,0.85) !important; font-family: 'Syne', sans-serif !important; }
 
-/* プログレス */
 [data-testid="stProgress"] > div > div {
     background: linear-gradient(90deg, #7c4dff, #ff4081) !important;
     border-radius: 4px !important;
 }
-
-/* サクセスバナー */
 [data-testid="stAlert"] {
     border-radius: 10px !important;
     font-size: 0.82rem !important;
 }
 
-/* スクロールバー */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(179,136,255,0.3); border-radius: 4px; }
@@ -156,10 +143,18 @@ h2, h3 { color: rgba(255,255,255,0.85) !important; font-family: 'Syne', sans-ser
 # ── ヘッダー ──────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="hero">
-    <h1>PSD Layer Splitter</h1>
+    <h1>File Layer Splitter</h1>
     <p>Upload · Extract · Download</p>
+    <div class="badge-row">
+        <span class="badge badge-psd">PSD</span>
+        <span class="badge badge-ai">AI</span>
+        <span class="badge badge-eps">EPS</span>
+        <span class="badge badge-pdf">PDF</span>
+        <span class="badge badge-jpg">JPG</span>
+    </div>
 </div>
 """, unsafe_allow_html=True)
+
 
 # ── ヘルパー関数 ──────────────────────────────────────────────────────────────
 
@@ -168,136 +163,207 @@ def sanitize_name(name: str) -> str:
     return re.sub(r'[\\/:*?"<>|]', "_", name).strip() or "layer"
 
 
+# ── PSD 処理 ──────────────────────────────────────────────────────────────────
+
 def collect_layers(layer, depth=0):
-    """
-    再帰的にレイヤーを収集する。
-    グループは子を展開し、リーフレイヤー（画像を持つもの）のみを返す。
-    """
+    """再帰的にリーフレイヤーを収集する"""
     results = []
-    if hasattr(layer, "__iter__") and not isinstance(layer, PSDImage):
+    if isinstance(layer, PSDImage):
+        for child in layer:
+            results.extend(collect_layers(child, depth))
+    elif layer.is_group():
         for child in layer:
             results.extend(collect_layers(child, depth + 1))
     else:
-        # PSDImage 自体（ルート）はスキップ
-        if isinstance(layer, PSDImage):
-            for child in layer:
-                results.extend(collect_layers(child, depth))
-        else:
-            # is_group() が True のものは子を再帰展開
-            if layer.is_group():
-                for child in layer:
-                    results.extend(collect_layers(child, depth + 1))
-            else:
-                results.append(layer)
+        results.append(layer)
     return results
 
 
 def process_psd(file_bytes: bytes):
     """
-    PSD を解析し、レイヤーごとの PNG bytes と名前のリストを返す。
-    Returns: list of (layer_name, png_bytes)
+    PSD を解析してレイヤーごとに PNG 化する。
+    Returns: list of (file_name, label, png_bytes, PIL.Image), meta dict
     """
     psd = PSDImage.open(io.BytesIO(file_bytes))
     layers = collect_layers(psd)
-
     results = []
     name_count: dict[str, int] = {}
 
     for layer in layers:
-        # 非表示レイヤーをスキップ（オプション：スキップしたい場合はコメントを外す）
-        # if not layer.is_visible():
-        #     continue
-
         try:
             img = layer.composite()
         except Exception:
             continue
-
         if img is None:
             continue
 
-        base_name = sanitize_name(layer.name)
-        # 重複名に連番を付ける
-        if base_name in name_count:
-            name_count[base_name] += 1
-            file_name = f"{base_name}_{name_count[base_name]:02d}.png"
+        base = sanitize_name(layer.name)
+        if base in name_count:
+            name_count[base] += 1
+            fname = f"{base}_{name_count[base]:02d}.png"
         else:
-            name_count[base_name] = 0
-            file_name = f"{base_name}.png"
+            name_count[base] = 0
+            fname = f"{base}.png"
 
         buf = io.BytesIO()
         img.save(buf, format="PNG")
-        results.append((file_name, layer.name, buf.getvalue(), img))
+        results.append((fname, layer.name, buf.getvalue(), img))
 
-    return results, psd
+    meta = {"width": psd.width, "height": psd.height}
+    return results, meta
 
 
-def build_zip(layer_data: list) -> bytes:
-    """レイヤー PNG を 1 つの ZIP にまとめる"""
-    zip_buf = io.BytesIO()
-    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file_name, _, png_bytes, _ in layer_data:
-            zf.writestr(file_name, png_bytes)
-    return zip_buf.getvalue()
+# ── AI / EPS / PDF 処理（PyMuPDF） ────────────────────────────────────────────
+
+def _fitz_filetype(name: str) -> str:
+    """拡張子から PyMuPDF の filetype 文字列を返す"""
+    ext = name.rsplit(".", 1)[-1].lower()
+    return {"ai": "pdf", "eps": "eps", "pdf": "pdf"}.get(ext, "pdf")
+
+
+def process_via_fitz(file_bytes: bytes, original_name: str):
+    """
+    PyMuPDF を使って各ページを高解像度 PNG に変換する。
+    Returns: list of (file_name, label, png_bytes, PIL.Image), meta dict
+    """
+    doc = fitz.open(stream=file_bytes, filetype=_fitz_filetype(original_name))
+    results = []
+    matrix = fitz.Matrix(2, 2)  # 2× スケール（≈144 dpi）
+
+    for i, page in enumerate(doc):
+        pix = page.get_pixmap(matrix=matrix, alpha=True)
+        png_bytes = pix.tobytes("png")
+        img = Image.open(io.BytesIO(png_bytes))
+        fname = f"page_{i + 1:03d}.png"
+        label = f"Page {i + 1}"
+        results.append((fname, label, png_bytes, img))
+
+    meta = {
+        "pages":  doc.page_count,
+        "width":  int(doc[0].rect.width * 2)  if doc.page_count else 0,
+        "height": int(doc[0].rect.height * 2) if doc.page_count else 0,
+    }
+    doc.close()
+    return results, meta
+
+
+# ── JPG / JPEG 処理 ───────────────────────────────────────────────────────────
+
+def process_jpg(file_bytes: bytes, original_name: str):
+    """
+    JPG を PNG に変換して返す。
+    Returns: list of (file_name, label, png_bytes, PIL.Image), meta dict
+    """
+    img = Image.open(io.BytesIO(file_bytes)).convert("RGBA")
+    base = sanitize_name(original_name.rsplit(".", 1)[0])
+    fname = f"{base}.png"
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    png_bytes = buf.getvalue()
+
+    meta = {"width": img.width, "height": img.height}
+    return [(fname, original_name, png_bytes, img)], meta
+
+
+# ── ZIP 生成 ──────────────────────────────────────────────────────────────────
+
+def build_zip(items: list) -> bytes:
+    """(file_name, label, png_bytes, img) のリストを ZIP にまとめる"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname, _, png_bytes, _ in items:
+            zf.writestr(fname, png_bytes)
+    return buf.getvalue()
 
 
 # ── メイン UI ─────────────────────────────────────────────────────────────────
 uploaded = st.file_uploader(
-    "PSDファイルをドロップ、またはクリックして選択",
-    type=["psd"],
-    help="Adobe Photoshop .psd 形式のファイルに対応しています",
+    "ファイルをドロップ、またはクリックして選択",
+    type=["psd", "ai", "eps", "pdf", "jpg", "jpeg"],
+    help="対応形式: PSD / AI / EPS / PDF / JPG",
 )
 
 if uploaded is not None:
     st.divider()
+    ext = uploaded.name.rsplit(".", 1)[-1].lower()
+    file_bytes = uploaded.read()
 
-    with st.spinner("PSDを解析中..."):
+    # ── 処理の振り分け ────────────────────────────────────────────────────────
+    spinner_msg = {
+        "psd":  "PSD レイヤーを解析中...",
+        "ai":   "AI ファイルをレンダリング中...",
+        "eps":  "EPS ファイルをレンダリング中...",
+        "pdf":  "PDF ページを変換中...",
+        "jpg":  "JPG を変換中...",
+        "jpeg": "JPG を変換中...",
+    }.get(ext, "処理中...")
+
+    with st.spinner(spinner_msg):
         try:
-            file_bytes = uploaded.read()
-            layer_data, psd = process_psd(file_bytes)
+            if ext == "psd":
+                items, meta = process_psd(file_bytes)
+            elif ext in ("ai", "eps", "pdf"):
+                items, meta = process_via_fitz(file_bytes, uploaded.name)
+            elif ext in ("jpg", "jpeg"):
+                items, meta = process_jpg(file_bytes, uploaded.name)
+            else:
+                st.error(f"未対応の形式です: .{ext}")
+                st.stop()
         except Exception as e:
-            st.error(f"PSDの読み込みに失敗しました: {e}")
+            st.error(f"ファイルの処理に失敗しました: {e}")
             st.stop()
 
-    if not layer_data:
-        st.warning("変換可能なレイヤーが見つかりませんでした。")
+    if not items:
+        st.warning("変換可能なコンテンツが見つかりませんでした。")
         st.stop()
 
-    # ── メトリクス ───────────────────────────────────────────────────────────
+    # ── メトリクス ────────────────────────────────────────────────────────────
     col1, col2, col3 = st.columns(3)
-    col1.metric("キャンバスサイズ", f"{psd.width} × {psd.height}")
-    col2.metric("検出レイヤー数", len(layer_data))
-    total_kb = sum(len(d[2]) for d in layer_data) / 1024
-    col3.metric("合計サイズ", f"{total_kb:.1f} KB")
+    col1.metric("形式", f".{ext.upper()}")
+
+    if ext == "psd":
+        col2.metric("レイヤー数", len(items))
+        col3.metric("キャンバス", f"{meta['width']} × {meta['height']}")
+    elif ext in ("ai", "eps", "pdf"):
+        col2.metric("ページ数", meta.get("pages", len(items)))
+        col3.metric("解像度倍率", "2×（≈144dpi）")
+    else:
+        col2.metric("画像数", len(items))
+        col3.metric("サイズ", f"{meta['width']} × {meta['height']}")
 
     st.divider()
 
-    # ── レイヤープレビュー ───────────────────────────────────────────────────
-    st.markdown("### レイヤープレビュー")
+    # ── プレビュー ────────────────────────────────────────────────────────────
+    st.markdown("### プレビュー")
     progress = st.progress(0, text="サムネイルを生成中...")
 
-    # カード HTML を構築
-    cols = st.columns(min(4, len(layer_data)))
-    for i, (file_name, layer_name, png_bytes, img) in enumerate(layer_data):
-        progress.progress((i + 1) / len(layer_data), text=f"{file_name} を処理中...")
+    cols = st.columns(min(4, len(items)))
+    for i, (fname, label, png_bytes, img) in enumerate(items):
+        progress.progress((i + 1) / len(items), text=f"{fname} を処理中...")
         thumb_buf = io.BytesIO()
         thumb = img.copy()
         thumb.thumbnail((120, 120))
+        # RGBA → RGB（背景を暗色で合成して st.image に渡す）
+        if thumb.mode == "RGBA":
+            bg = Image.new("RGB", thumb.size, (30, 30, 30))
+            bg.paste(thumb, mask=thumb.split()[3])
+            thumb = bg
         thumb.save(thumb_buf, format="PNG")
-
         with cols[i % len(cols)]:
-            st.image(thumb_buf.getvalue(), caption=layer_name, use_container_width=True)
+            st.image(thumb_buf.getvalue(), caption=label, use_container_width=True)
 
     progress.empty()
 
-    # ── ZIP 生成 & ダウンロード ───────────────────────────────────────────────
+    # ── ZIP ダウンロード ───────────────────────────────────────────────────────
     st.divider()
     st.markdown("### ダウンロード")
 
-    zip_bytes = build_zip(layer_data)
-    zip_name = f"{uploaded.name.rsplit('.', 1)[0]}_layers.zip"
+    zip_bytes = build_zip(items)
+    zip_name  = f"{uploaded.name.rsplit('.', 1)[0]}_export.zip"
+    total_kb  = sum(len(it[2]) for it in items) / 1024
 
-    st.success(f"✓ {len(layer_data)} レイヤーを ZIP にパッケージ化しました ({len(zip_bytes)/1024:.1f} KB)")
+    st.success(f"✓ {len(items)} ファイルを ZIP にパッケージ化しました（合計 {total_kb:.1f} KB）")
 
     st.download_button(
         label="⬇  ZIP をダウンロード",
@@ -307,10 +373,10 @@ if uploaded is not None:
     )
 
     with st.expander("含まれるファイル一覧"):
-        for file_name, layer_name, png_bytes, _ in layer_data:
+        for fname, label, png_bytes, _ in items:
             st.markdown(
-                f"- `{file_name}` &nbsp;&nbsp;·&nbsp;&nbsp; "
-                f"<span style='color:rgba(255,255,255,0.35)'>{layer_name}</span> "
+                f"- `{fname}` &nbsp;&nbsp;·&nbsp;&nbsp; "
+                f"<span style='color:rgba(255,255,255,0.35)'>{label}</span> "
                 f"<span style='color:rgba(255,255,255,0.2);float:right'>{len(png_bytes)//1024} KB</span>",
                 unsafe_allow_html=True,
             )
@@ -326,11 +392,15 @@ else:
         margin-top: 1.5rem;
         font-size: 0.78rem;
         color: rgba(255,255,255,0.35);
-        line-height: 2;
+        line-height: 2.2;
     ">
     <strong style="color:rgba(255,255,255,0.55)">使い方</strong><br>
-    1. 上のアップロードエリアに <code>.psd</code> ファイルをドロップ<br>
-    2. レイヤーが自動的に PNG に変換・プレビュー表示<br>
-    3. ZIP ダウンロードボタンで一括取得
+    1. ファイルをアップロードエリアにドロップ<br>
+    2. 形式に応じて自動処理（レイヤー分割 / ページ変換 / PNG化）<br>
+    3. ZIP ダウンロードボタンで一括取得<br><br>
+    <strong style="color:rgba(255,255,255,0.55)">形式別の処理</strong><br>
+    <code>.psd</code> &nbsp;— レイヤーごとに PNG 分割（psd-tools）<br>
+    <code>.ai / .eps / .pdf</code> &nbsp;— 各ページを高解像度 PNG 化（PyMuPDF）<br>
+    <code>.jpg / .jpeg</code> &nbsp;— PNG に変換して ZIP 化
     </div>
     """, unsafe_allow_html=True)
