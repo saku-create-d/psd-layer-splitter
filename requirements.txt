@@ -3,5 +3,3 @@ psd-tools
 pillow
 scikit-image
 aggdraw
-pymupdf
-python-pptx
