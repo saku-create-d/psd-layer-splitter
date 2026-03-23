@@ -2,6 +2,7 @@ import streamlit as st
 import zipfile
 import io
 import re
+import json
 from psd_tools import PSDImage
 
 # ── ページ設定 ────────────────────────────────────────────────────────────────
@@ -227,17 +228,30 @@ def process_psd(file_bytes: bytes):
 
         buf = io.BytesIO()
         img.save(buf, format="PNG")
-        results.append((file_name, layer.name, buf.getvalue(), img))
+        meta = {
+            "filename": file_name,
+            "name": layer.name,
+            "x": layer.left,
+            "y": layer.top,
+            "width": layer.width,
+            "height": layer.height,
+            "opacity": round(layer.opacity / 255, 6),
+        }
+        results.append((file_name, layer.name, buf.getvalue(), img, meta))
 
     return results, psd
 
 
 def build_zip(layer_data: list) -> bytes:
-    """レイヤー PNG を 1 つの ZIP にまとめる"""
+    """レイヤー PNG と data.json を 1 つの ZIP にまとめる"""
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file_name, _, png_bytes, _ in layer_data:
+        layer_list = []
+        for file_name, _, png_bytes, _, meta in layer_data:
             zf.writestr(file_name, png_bytes)
+            layer_list.append(meta)
+        json_bytes = json.dumps(layer_list, ensure_ascii=False, indent=2).encode("utf-8")
+        zf.writestr("data.json", json_bytes)
     return zip_buf.getvalue()
 
 
@@ -278,7 +292,7 @@ if uploaded is not None:
 
     # カード HTML を構築
     cols = st.columns(min(4, len(layer_data)))
-    for i, (file_name, layer_name, png_bytes, img) in enumerate(layer_data):
+    for i, (file_name, layer_name, png_bytes, img, _) in enumerate(layer_data):
         progress.progress((i + 1) / len(layer_data), text=f"{file_name} を処理中...")
         thumb_buf = io.BytesIO()
         thumb = img.copy()
@@ -307,7 +321,7 @@ if uploaded is not None:
     )
 
     with st.expander("含まれるファイル一覧"):
-        for file_name, layer_name, png_bytes, _ in layer_data:
+        for file_name, layer_name, png_bytes, _, __ in layer_data:
             st.markdown(
                 f"- `{file_name}` &nbsp;&nbsp;·&nbsp;&nbsp; "
                 f"<span style='color:rgba(255,255,255,0.35)'>{layer_name}</span> "
