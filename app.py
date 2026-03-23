@@ -242,16 +242,72 @@ def process_psd(file_bytes: bytes):
     return results, psd
 
 
-def build_zip(layer_data: list) -> bytes:
-    """レイヤー PNG と data.json を 1 つの ZIP にまとめる"""
+def generate_image_id() -> str:
+    """画像アイテム用のユニーク ID を生成する（例: i8f3a2c1d...）"""
+    import uuid
+    return "i" + uuid.uuid4().hex
+
+
+def build_bp(layer_data: list, psd) -> str:
+    """
+    PSD レイヤー情報から Spinno .bp 形式の JSON 文字列（1行）を生成する。
+    ルート構造: {"doc_type": "spinno", "design_data": {"doc": {...}}}
+    """
+    items = []
+    for file_name, layer_name, _, _, meta in layer_data:
+        w = meta["width"]
+        h = meta["height"]
+        cx = meta["x"] + w / 2          # left + width/2  → 中心 X
+        cy = meta["y"] + h / 2          # top  + height/2 → 中心 Y
+        opacity = meta["opacity"]        # 0.0〜1.0
+
+        item = {
+            "type": 0,                   # 画像レイヤー固定値
+            "image_id": generate_image_id(),
+            "name": layer_name,
+            "x": cx,
+            "y": cy,
+            "w": w,
+            "h": h,
+            "ow": w,
+            "oh": h,
+            "angle": 0,
+            "opacity": opacity,
+            "flip_h": False,
+            "flip_v": False,
+            "gsize": 20,
+            "noareaover": 0,
+            "locked": False,
+            "visible": True,
+            "blend_mode": "normal",
+        }
+        items.append(item)
+
+    doc = {
+        "width": psd.width,
+        "height": psd.height,
+        "items": items,
+    }
+
+    bp_obj = {
+        "doc_type": "spinno",
+        "design_data": {
+            "doc": doc,
+        },
+    }
+
+    # 改行なし・ensure_ascii=False で1行出力
+    return json.dumps(bp_obj, ensure_ascii=False, separators=(",", ":"))
+
+
+def build_zip(layer_data: list, psd, bp_name: str) -> bytes:
+    """レイヤー PNG と .bp ファイルを 1 つの ZIP にまとめる"""
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        layer_list = []
-        for file_name, _, png_bytes, _, meta in layer_data:
+        for file_name, _, png_bytes, _, __ in layer_data:
             zf.writestr(file_name, png_bytes)
-            layer_list.append(meta)
-        json_bytes = json.dumps(layer_list, ensure_ascii=False, indent=2).encode("utf-8")
-        zf.writestr("data.json", json_bytes)
+        bp_str = build_bp(layer_data, psd)
+        zf.writestr(bp_name, bp_str.encode("utf-8"))
     return zip_buf.getvalue()
 
 
@@ -308,8 +364,10 @@ if uploaded is not None:
     st.divider()
     st.markdown("### ダウンロード")
 
-    zip_bytes = build_zip(layer_data)
-    zip_name = f"{uploaded.name.rsplit('.', 1)[0]}_layers.zip"
+    base_name = uploaded.name.rsplit(".", 1)[0]
+    bp_name = f"{base_name}.bp"
+    zip_name = f"{base_name}_layers.zip"
+    zip_bytes = build_zip(layer_data, psd, bp_name)
 
     st.success(f"✓ {len(layer_data)} レイヤーを ZIP にパッケージ化しました ({len(zip_bytes)/1024:.1f} KB)")
 
@@ -328,6 +386,11 @@ if uploaded is not None:
                 f"<span style='color:rgba(255,255,255,0.2);float:right'>{len(png_bytes)//1024} KB</span>",
                 unsafe_allow_html=True,
             )
+        st.markdown(
+            f"- `{bp_name}` &nbsp;&nbsp;·&nbsp;&nbsp; "
+            f"<span style='color:rgba(179,136,255,0.7)'>Spinno レイアウトデータ</span>",
+            unsafe_allow_html=True,
+        )
 
 else:
     # 初期状態のヒント
